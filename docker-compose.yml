@@ -1,0 +1,33 @@
+services:
+  sessions-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: sessions-api-container
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://sessions_user:sessions_password@db:5432/sessions_db
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    container_name: sessions-db-container
+    environment:
+      POSTGRES_USER: sessions_user
+      POSTGRES_PASSWORD: sessions_password
+      POSTGRES_DB: sessions_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sessions_user -d sessions_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
