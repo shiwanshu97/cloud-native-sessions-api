@@ -33,3 +33,7 @@ jobs:
       - name: Run automated tests
         run: |
           python -m pytest -v
+          
+      - name: Build Docker image
+        run: |
+          docker build -f docker/Dockerfile -t sessions-api:ci .
