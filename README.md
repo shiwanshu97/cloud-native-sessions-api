@@ -2,13 +2,13 @@
 
 A containerized REST API built with Python, FastAPI, and PostgreSQL, with a DevOps-focused deployment architecture covering Docker, AWS, Terraform, CI/CD, security, monitoring, and disaster recovery.
 
-**GitHub Repository:** [https://github.com/shiwanshu97/cloud-native-sessions-api](https://github.com/shiwanshu97/cloud-native-sessions-api)
+**GitHub Repository:** https://github.com/shiwanshu97/cloud-native-sessions-api
 
 ---
 
 ## 1. Project Overview
 
-This project demonstrates the design and implementation of a secure, scalable, and automated deployment setup for a containerized Sessions REST API.
+This project demonstrates the design and implementation of a deployment setup for a containerized Sessions REST API.
 
 The main focus is infrastructure automation, containerization, CI/CD, security, monitoring, logging, and disaster recovery rather than complex application development.
 
@@ -16,9 +16,9 @@ The application is developed using FastAPI and PostgreSQL. Docker and Docker Com
 
 The cloud deployment architecture is designed around AWS ECS Fargate, Amazon ECR, Amazon RDS, and Terraform.
 
-The infrastructure uses two Availability Zones to improve production availability. Staging and production have separate application services and PostgreSQL databases, with different availability and cost requirements.
+The infrastructure design uses two Availability Zones to improve production availability. Staging and production have separate application services and PostgreSQL databases, with different availability and cost requirements.
 
-No paid AWS infrastructure has been created for this assessment. The Terraform configuration has been formatted, validated, and planned without applying it.
+**No paid AWS infrastructure has been created for this assessment.** The Terraform configuration has been formatted, validated, and planned without being applied.
 
 ## 2. Project Objectives
 
@@ -30,9 +30,9 @@ No paid AWS infrastructure has been created for this assessment. The Terraform c
 - Provision cloud infrastructure using Terraform.
 - Automate testing, image building, security scanning, and deployment.
 - Implement secure secrets management and access control.
-- Configure centralized logging, monitoring, and alerts.
+- Design centralized logging, monitoring, and alerts.
 - Document backup, recovery, and deployment rollback procedures.
-- Design a production-ready Multi-AZ deployment architecture.
+- Design a production-oriented Multi-AZ deployment architecture.
 - Separate staging and production environments while considering infrastructure costs.
 
 ## 3. Technology Stack and Tool Selection
@@ -52,16 +52,16 @@ No paid AWS infrastructure has been created for this assessment. The Terraform c
 | Infrastructure as Code | Terraform | Provision infrastructure |
 | CI/CD | GitHub Actions | Automate build and deployment |
 | Security scanning | Trivy | Scan vulnerabilities |
-| Monitoring | Amazon CloudWatch | Logs, metrics, and alerts |
-| Secrets management | AWS Secrets Manager | Secure credentials |
+| Monitoring and logging | Amazon CloudWatch | Logs, metrics, and alarms |
+| Secrets management | AWS Secrets Manager | Manage sensitive credentials |
 | Version control | Git + GitHub | Track and manage code |
 | Testing | pytest + FastAPI TestClient | Automated API testing |
 
 ### Why These Technologies?
 
-**FastAPI:** Lightweight Python framework with automatic API documentation.
+**FastAPI:** A lightweight Python framework with automatic API documentation.
 
-**PostgreSQL:** Reliable relational database with strong Docker and AWS integration.
+**PostgreSQL:** A reliable relational database with strong Docker and AWS integration.
 
 **SQLAlchemy:** Provides database interaction through Python objects and SQL queries.
 
@@ -71,7 +71,7 @@ No paid AWS infrastructure has been created for this assessment. The Terraform c
 
 **Docker Compose:** Runs multiple containers together for local development and testing.
 
-**AWS ECS Fargate:** Runs containers without requiring us to manage underlying servers.
+**AWS ECS Fargate:** Runs containers without requiring us to manage the underlying servers.
 
 **Terraform:** Defines reusable infrastructure configuration and supports repeatable deployments.
 
@@ -79,9 +79,9 @@ No paid AWS infrastructure has been created for this assessment. The Terraform c
 
 **Trivy:** Identifies vulnerabilities in container images and dependencies.
 
-**CloudWatch:** Centralizes logs, metrics, dashboards, and alarms.
+**CloudWatch:** Centralizes logs and metrics, and supports dashboards and alarms.
 
-**AWS Secrets Manager:** Stores sensitive credentials securely and supports rotation.
+**AWS Secrets Manager:** Stores sensitive credentials securely and supports credential rotation.
 
 ### Alternative Tools Considered
 
@@ -91,11 +91,11 @@ Both support CI/CD automation. GitHub Actions was selected because it integrates
 
 **Why Not Ansible?**
 
-Ansible is useful for configuring servers and operating systems. Since we use ECS Fargate, AWS manages the underlying infrastructure. Terraform handles infrastructure provisioning, so Ansible is not required.
+Ansible is useful for configuring servers and operating systems. Since this architecture uses ECS Fargate, AWS manages the underlying infrastructure. Terraform handles infrastructure provisioning, so Ansible is not required.
 
 **Why Not Kubernetes / EKS?**
 
-Kubernetes provides advanced container orchestration but adds operational complexity. ECS Fargate is sufficient for this small service and requires less infrastructure management.
+Kubernetes provides advanced container orchestration but adds operational complexity. ECS Fargate is sufficient for this service and requires less infrastructure management.
 
 ## 4. Application Architecture
 
@@ -123,7 +123,7 @@ SQLAlchemy is used to communicate with PostgreSQL. Pydantic schemas validate inc
 - Pydantic request and response schemas.
 - Create, read, update, and delete operations.
 - Database connection management through dependency injection.
-- Automatic database table creation during application startup for the current implementation.
+- Automatic database table creation during application startup in the current implementation.
 - HTTP 404 responses when a requested session does not exist.
 
 For a future production enhancement, database schema changes should be managed through a migration tool such as Alembic rather than relying only on automatic table creation.
@@ -177,7 +177,9 @@ The installed dependencies are recorded in `requirements.txt`.
 
 ### Run the Application Locally
 
-Start the FastAPI development server:
+The application requires a reachable PostgreSQL database.
+
+After configuring the database connection through the supported environment variables, start the FastAPI development server:
 
 ```bash
 uvicorn app.main:app --reload
@@ -188,6 +190,8 @@ The application is available at:
 `http://127.0.0.1:8000`
 
 Stop the server using `Ctrl + C`.
+
+For the complete local API and database environment, use Docker Compose as described in Section 8.
 
 ## 6. PostgreSQL Integration
 
@@ -263,9 +267,10 @@ The Dockerfile:
 2. Sets `/app` as the working directory.
 3. Copies `requirements.txt`.
 4. Installs Python dependencies.
-5. Copies the application source code.
-6. Exposes port 8000.
-7. Starts the application using Uvicorn.
+5. Removes pip from the runtime image to reduce the image's vulnerability footprint.
+6. Copies the application source code.
+7. Exposes port 8000.
+8. Starts the application using Uvicorn.
 
 ### Docker Image Build
 
@@ -277,9 +282,19 @@ docker build -f docker/Dockerfile -t sessions-api:1.0 .
 
 ### Run the Container Independently
 
+The API requires a PostgreSQL database. Running the API container by itself will not provide a working database connection unless an external PostgreSQL database is available and configured.
+
+For example, when an accessible PostgreSQL database is available:
+
 ```bash
-docker run -d --name sessions-api-container -p 8001:8000 sessions-api:1.0
+docker run -d \
+  --name sessions-api-container \
+  -p 8001:8000 \
+  -e DATABASE_URL="postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE" \
+  sessions-api:1.0
 ```
+
+Replace the example database connection values with the actual database configuration. Do not put real credentials into source control.
 
 Check the running container:
 
@@ -290,6 +305,8 @@ docker ps
 Test the health endpoint:
 
 `http://localhost:8001/health`
+
+For the recommended local demonstration, use Docker Compose, which starts the API and PostgreSQL together.
 
 ### Docker Ignore Configuration
 
@@ -321,8 +338,8 @@ Location:
 
 | Service | Container Name | Internal Port | Host Port |
 |---|---|---|---|
-| FastAPI | sessions-api-container | 8000 | 8001 |
-| PostgreSQL | sessions-db-container | 5432 | Not exposed |
+| FastAPI | `sessions-api-container` | 8000 | 8001 |
+| PostgreSQL | `sessions-db-container` | 5432 | Not exposed |
 
 ### Implemented Compose Features
 
@@ -388,7 +405,7 @@ docker compose down -v
 
 ### Local Testing Results
 
-The following operations were successfully tested using the running Docker Compose environment:
+The following operations were successfully tested using the Docker Compose environment:
 
 - API and PostgreSQL containers started successfully.
 - PostgreSQL reported a healthy container status.
@@ -464,7 +481,7 @@ Git has been initialized in the project root.
 
 **GitHub URL:**
 
-[https://github.com/shiwanshu97/cloud-native-sessions-api](https://github.com/shiwanshu97/cloud-native-sessions-api)
+https://github.com/shiwanshu97/cloud-native-sessions-api
 
 ### Git Configuration Completed
 
@@ -475,7 +492,7 @@ Git has been initialized in the project root.
 - Initial commit created.
 - GitHub remote configured as `origin`.
 - Local main branch connected to the remote main branch.
-- Initial project pushed successfully to GitHub.
+- Project pushed successfully to GitHub.
 
 ### Git Commands Used
 
@@ -650,7 +667,9 @@ Terraform defines endpoints for:
 - AWS Secrets Manager.
 - Amazon S3 gateway endpoint.
 
-These endpoints allow private ECS tasks to access the required AWS services without requiring a NAT gateway for this traffic.
+These endpoints allow private ECS tasks to access the required AWS services without requiring a NAT gateway for this supported service traffic.
+
+Additional outbound internet access may require a NAT gateway or another suitable egress design.
 
 ### Supporting AWS Services
 
@@ -680,7 +699,7 @@ Staging and production have different availability and cost requirements.
 | PostgreSQL | Single-AZ | Multi-AZ |
 | Database endpoint | Separate | Separate |
 | Database credentials | Separate | Separate |
-| Backup retention | 1 day | 7 days |
+| Backup retention | 7 days | 7 days |
 | Database deletion protection | Disabled | Enabled |
 | Load balancer | Shared ALB | Shared ALB |
 
@@ -815,13 +834,6 @@ The latest Terraform plan reports:
 Plan: 46 to add, 0 to change, 0 to destroy.
 ```
 
-The plan confirms both database resources:
-
-```text
-module.network.aws_db_instance.production will be created
-module.network.aws_db_instance.staging will be created
-```
-
 The plan includes the separate staging and production databases, ECS services, networking, load balancing, security groups, IAM resources, and supporting infrastructure.
 
 **Important:** Terraform has not been applied. The 46 resources are planned only; no AWS infrastructure has been created for this assessment.
@@ -863,7 +875,7 @@ The repository uses immutable image tags and scan-on-push configuration.
 | Memory | 512 MiB | 512 MiB |
 | Container port | 8000 | 8000 |
 
-Both services run in private application subnets and use the ECS security group.
+Both services are designed to run in private application subnets and use the ECS security group.
 
 The Application Load Balancer forwards traffic to the corresponding target groups.
 
@@ -871,9 +883,11 @@ The Application Load Balancer forwards traffic to the corresponding target group
 
 The task definitions use environment-specific database endpoints and password secrets.
 
-The ECS execution role has permission to retrieve both database password secrets from Secrets Manager.
+The ECS execution role has permission to retrieve the database password secrets from Secrets Manager.
 
-The application receives the database configuration through environment variables and the `DB_PASSWORD` secret reference.
+The application receives database configuration through environment variables and the `DB_PASSWORD` secret reference.
+
+The initial ECR image must exist before ECS services can successfully start their application tasks.
 
 ## 16. CI/CD Pipeline Architecture
 
@@ -925,11 +939,15 @@ The workflow scans the Docker image for HIGH and CRITICAL vulnerabilities.
 
 The scan is configured to ignore unfixed vulnerabilities and fail the workflow when qualifying vulnerabilities are found.
 
+The latest CI run completed the Trivy scan successfully without reported qualifying findings.
+
 ### Secure CI/CD Authentication
 
 GitHub Actions is designed to use OpenID Connect (OIDC) to obtain temporary AWS credentials through an IAM role.
 
 Long-lived AWS access keys will not be stored in the repository.
+
+The AWS OIDC provider and deployment IAM role still need to be configured before a real AWS deployment.
 
 ### Terraform and ECS Task Definition Integration
 
@@ -954,11 +972,14 @@ The workflow uses the GitHub repository variable:
 
 When this variable is not set to `true`, the AWS publishing and deployment jobs are skipped while the CI workflow can still run.
 
+For this assessment, AWS deployment remains disabled.
+
 The AWS deployment path also requires:
 
 - An AWS IAM role ARN configured in GitHub.
 - A correctly configured GitHub OIDC trust relationship.
 - Provisioned ECR and ECS infrastructure.
+- An initial image published to ECR.
 - Registered staging and production ECS task definitions.
 - A configured production GitHub environment and approval protection.
 
@@ -972,6 +993,8 @@ If deployment causes failures:
 4. Verify application health.
 5. Investigate the failed release.
 
+The rollback logic is included in the workflow but has not been exercised against live AWS infrastructure.
+
 ### Pipeline Validation
 
 The workflow was checked using:
@@ -982,9 +1005,16 @@ actionlint .github/workflows/ci.yml
 
 The latest syntax validation returned no errors.
 
-The earlier CI and Docker build stages have also run successfully on GitHub Actions.
+The latest GitHub Actions run successfully completed:
 
-The latest Trivy and conditional AWS deployment workflow has been syntax-checked. Live AWS deployment, production approval, and rollback execution have not yet been tested.
+- Python dependency installation.
+- All 10 automated tests.
+- Docker image build.
+- Trivy vulnerability scan.
+
+The AWS publishing and deployment jobs were skipped because AWS deployment is intentionally disabled.
+
+Live AWS deployment, production approval, and rollback execution have not yet been tested.
 
 ## 17. Security Architecture
 
@@ -997,7 +1027,7 @@ Security is applied across all components.
 | Application access | IAM task roles |
 | Database | Private subnets |
 | Credentials | AWS Secrets Manager |
-| CI/CD authentication | GitHub OIDC |
+| CI/CD authentication | GitHub OIDC design |
 | Image security | Trivy |
 | Source control | GitHub repository protections |
 | Logging | CloudWatch |
@@ -1012,7 +1042,7 @@ The security groups enforce the following rules:
 - Both RDS databases accept PostgreSQL traffic on port 5432 only from the ECS security group.
 - RDS instances are not publicly accessible.
 
-Staging access on port 8443 is currently designed to be public. It should be restricted or protected with authentication before a real production deployment.
+Staging access on port 8443 is currently designed to be public. It should be restricted or protected with authentication before a real deployment.
 
 ### IAM Roles
 
@@ -1021,6 +1051,8 @@ Two important ECS roles are configured in Terraform.
 **Task execution role:** Allows ECS to pull images from ECR, retrieve startup secrets, and publish logs.
 
 **Task role:** Assigned to the running application and kept separate from the execution role so application permissions can be controlled independently.
+
+The GitHub Actions deployment role and its OIDC trust relationship remain to be configured.
 
 ### Secrets Management
 
@@ -1042,6 +1074,8 @@ If a secret is exposed:
 4. Update affected application connections.
 5. Verify the service.
 6. Investigate the exposure and review repository history.
+
+A more detailed procedure is provided in `docs/secret-rotation.md`.
 
 ## 18. SSL/TLS and HTTPS
 
@@ -1082,9 +1116,9 @@ flowchart TD
     B["ECS Metrics"] --> D
     C["ALB Metrics"] --> D
     E["RDS Metrics"] --> D
-    D --> F["Dashboards"]
-    D --> G["CloudWatch Alarms"]
-    G --> H["SNS Notifications"]
+    D --> F["Proposed Dashboards"]
+    D --> G["Proposed CloudWatch Alarms"]
+    G --> H["Proposed SNS Notifications"]
     H --> I["Operations Team"]
 ```
 
@@ -1097,19 +1131,21 @@ flowchart TD
 | RDS | CPU utilization, database connections, free storage |
 | Application | Health endpoint availability and application errors |
 
-### Planned Alerts
+### Proposed Alerts
 
 **Alert 1: High 5xx Errors**
 
-Trigger an alert when the load balancer's 5xx errors exceed an agreed threshold.
+Proposed trigger: The load balancer's target 5xx error count exceeds 10 within a five-minute evaluation period.
 
 **Alert 2: High CPU Utilization**
 
-Trigger an alert when ECS CPU utilization remains above 80% for five minutes.
+Proposed trigger: ECS CPU utilization remains above 80% for five consecutive minutes.
 
-Alerts can be delivered through Amazon SNS.
+Alerts could be delivered through Amazon SNS.
 
 The CloudWatch log group and ECS log configuration are defined in Terraform. The full monitoring alarms, dashboards, SNS notifications, and live alert behaviour remain to be implemented and tested.
+
+Detailed monitoring recommendations are documented in `docs/monitoring-and-alerts.md`.
 
 ## 20. Backup and Disaster Recovery
 
@@ -1119,10 +1155,12 @@ Amazon RDS automated backups are configured in the Terraform design.
 
 | Environment | Backup Retention | Multi-AZ |
 |---|---|---|
-| Staging | 1 day | No |
+| Staging | 7 days | No |
 | Production | 7 days | Yes |
 
 Production also has deletion protection enabled.
+
+Automated backups and Multi-AZ availability address different recovery needs. Multi-AZ failover improves database availability but does not replace backups or protect against every form of data loss.
 
 ### Database Recovery Flow
 
@@ -1157,10 +1195,14 @@ flowchart TD
 
 The proposed production recovery targets are:
 
-- RPO: Up to 5 minutes, subject to the available recovery mechanism and backup configuration.
-- RTO: Within 1 hour, subject to recovery testing and AWS service availability.
+- **RPO:** Up to 24 hours.
+- **RTO:** Within 4 hours.
 
-These are proposed assessment targets, not measured guarantees. Multi-AZ failover and backup restoration should be tested before relying on these objectives in production.
+These are proposed assessment targets, not measured guarantees. Actual recovery times depend on backup availability, database size, recovery procedures, and AWS service availability.
+
+Multi-AZ failover may reduce service interruption during certain infrastructure failures, but it does not establish the backup recovery point. Backup restoration and failover should be tested before relying on these objectives in production.
+
+The detailed recovery procedure is documented in `docs/database-recovery.md`.
 
 ## 21. Operational Incident Scenarios
 
@@ -1172,6 +1214,8 @@ These are proposed assessment targets, not measured guarantees. Multi-AZ failove
 - Update Secrets Manager.
 - Verify the application.
 - Investigate the incident and prevent recurrence.
+
+Refer to `docs/secret-rotation.md` for the detailed procedure.
 
 ### Scenario 2: Sudden Traffic Increase
 
@@ -1193,9 +1237,11 @@ These are proposed assessment targets, not measured guarantees. Multi-AZ failove
 - Reconnect the application.
 - Verify application health.
 
+Refer to `docs/incident-response.md` and `docs/database-recovery.md` for operational guidance.
+
 ## 22. Project Directory Structure
 
-Current project structure:
+The project is organized into application code, automated tests, Docker configuration, Terraform infrastructure, CI/CD workflows, and operational documentation.
 
 ```text
 cloud-native-sessions-api/
@@ -1237,6 +1283,12 @@ cloud-native-sessions-api/
 │       └── ci.yml
 │
 ├── docs/
+│   ├── architecture.md
+│   ├── monitoring-and-alerts.md
+│   ├── deployment-rollback.md
+│   ├── secret-rotation.md
+│   ├── database-recovery.md
+│   ├── incident-response.md
 │   └── Ahoum Assignment DevOps Exp.pdf
 │
 ├── docker-compose.yml
@@ -1246,18 +1298,20 @@ cloud-native-sessions-api/
 └── README.md
 ```
 
-### Additional Documentation Planned
+### Operational Documentation
 
-The following operational documents can be added as the project is finalized:
+The `docs/` directory contains supporting documents:
 
-```text
-docs/
-├── architecture.md
-├── deployment.md
-├── rollback.md
-├── secret-rotation.md
-└── database-recovery.md
-```
+| Document | Purpose |
+|---|---|
+| `architecture.md` | Architecture and infrastructure design |
+| `monitoring-and-alerts.md` | Monitoring metrics and proposed alert thresholds |
+| `deployment-rollback.md` | Deployment and rollback procedures |
+| `secret-rotation.md` | Credential exposure and rotation procedure |
+| `database-recovery.md` | Database backup and recovery procedure |
+| `incident-response.md` | Operational incident scenarios and response steps |
+
+The assignment brief is also retained in the documentation directory.
 
 ## 23. Cost Considerations
 
@@ -1323,11 +1377,10 @@ The Terraform plan does not represent actual running infrastructure or actual AW
 - [x] All 10 automated tests passing.
 - [x] Git initialized and configured.
 - [x] `.gitignore` created.
-- [x] Initial Git commit created.
-- [x] GitHub repository created.
-- [x] Local Git repository connected to GitHub.
-- [x] Initial project pushed to GitHub main branch.
+- [x] GitHub repository created and connected.
+- [x] Project pushed to GitHub main branch.
 - [x] README updated with implementation and infrastructure documentation.
+- [x] Six operational documentation files created.
 
 ### Implemented or Configured and Validated
 
@@ -1335,6 +1388,7 @@ The Terraform plan does not represent actual running infrastructure or actual AW
 - [x] Automated test execution in GitHub Actions.
 - [x] Docker image build in GitHub Actions.
 - [x] Trivy image vulnerability scanning configuration.
+- [x] Latest CI run completed successfully, including tests, image build, and security scan.
 - [x] Conditional ECR publishing and ECS deployment workflow.
 - [x] GitHub Actions workflow syntax checked with actionlint.
 - [x] Terraform AWS provider and module configuration.
@@ -1354,7 +1408,7 @@ The Terraform plan does not represent actual running infrastructure or actual AW
 - [x] Separate production Multi-AZ database.
 - [x] Separate database secrets and endpoints.
 - [x] CloudWatch log group and ECS log configuration.
-- [x] Terraform outputs updated for both databases.
+- [x] Terraform outputs configured for both databases.
 - [x] Terraform formatting check passed.
 - [x] Terraform validation passed.
 - [x] Terraform plan generated successfully.
@@ -1366,16 +1420,16 @@ The Terraform plan does not represent actual running infrastructure or actual AW
 - [ ] Configure GitHub repository variables and production environment approval.
 - [ ] Complete DNS validation for the ACM certificate.
 - [ ] Prepare and publish the initial ECR image before starting ECS services.
-- [ ] Provision infrastructure when deployment is authorised.
+- [ ] Provision infrastructure when deployment is authorized.
 - [ ] Deploy staging and verify the health endpoint.
 - [ ] Deploy production and verify both ECS tasks and database connectivity.
 - [ ] Verify actual ECS task placement across Availability Zones.
 - [ ] Verify Multi-AZ database failover and backup recovery.
 - [ ] Configure and test CloudWatch alarms, dashboards, and notifications.
 - [ ] Perform deployment and rollback testing.
-- [ ] Complete operational runbooks and assessment evidence.
+- [ ] Capture and organize final assessment evidence.
 
-**Important:** The AWS infrastructure remains unprovisioned. Terraform validation and planning do not create AWS resources. No `terraform apply` has been performed for this assessment.
+**Important:** The AWS infrastructure remains unprovisioned. Terraform validation and planning do not create AWS resources. No `terraform apply` has been performed for this assessment. AWS deployment is intentionally disabled in the GitHub Actions workflow.
 
 ## 25. Project Philosophy
 
