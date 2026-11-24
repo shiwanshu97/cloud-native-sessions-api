@@ -2,7 +2,7 @@
 
 A containerized REST API built with Python, FastAPI, and PostgreSQL, with a DevOps-focused deployment architecture covering Docker, AWS, Terraform, CI/CD, security, monitoring, and disaster recovery.
 
-**GitHub Repository:** https://github.com/shiwanshu97/cloud-native-sessions-api
+**GitHub Repository:** [https://github.com/shiwanshu97/cloud-native-sessions-api](https://github.com/shiwanshu97/cloud-native-sessions-api)
 
 ---
 
@@ -14,7 +14,11 @@ The main focus is infrastructure automation, containerization, CI/CD, security, 
 
 The application is developed using FastAPI and PostgreSQL. Docker and Docker Compose provide a consistent local development environment.
 
-The planned cloud deployment architecture uses AWS ECS Fargate, Amazon ECR, Amazon RDS, and Terraform.
+The cloud deployment architecture is designed around AWS ECS Fargate, Amazon ECR, Amazon RDS, and Terraform.
+
+The infrastructure uses two Availability Zones to improve production availability. Staging and production have separate application services and PostgreSQL databases, with different availability and cost requirements.
+
+No paid AWS infrastructure has been created for this assessment. The Terraform configuration has been formatted, validated, and planned without applying it.
 
 ## 2. Project Objectives
 
@@ -28,6 +32,8 @@ The planned cloud deployment architecture uses AWS ECS Fargate, Amazon ECR, Amaz
 - Implement secure secrets management and access control.
 - Configure centralized logging, monitoring, and alerts.
 - Document backup, recovery, and deployment rollback procedures.
+- Design a production-ready Multi-AZ deployment architecture.
+- Separate staging and production environments while considering infrastructure costs.
 
 ## 3. Technology Stack and Tool Selection
 
@@ -117,8 +123,10 @@ SQLAlchemy is used to communicate with PostgreSQL. Pydantic schemas validate inc
 - Pydantic request and response schemas.
 - Create, read, update, and delete operations.
 - Database connection management through dependency injection.
-- Automatic database table creation during application startup for the current local implementation.
+- Automatic database table creation during application startup for the current implementation.
 - HTTP 404 responses when a requested session does not exist.
+
+For a future production enhancement, database schema changes should be managed through a migration tool such as Alembic rather than relying only on automatic table creation.
 
 ### API Documentation
 
@@ -199,11 +207,22 @@ The current database contains a `sessions` table.
 
 ### Database Connection
 
-The application reads its database connection string from the `DATABASE_URL` environment variable.
+The application supports two database configuration approaches:
+
+1. `DATABASE_URL` for local Docker Compose.
+2. Individual environment variables for ECS deployment.
+
+The ECS configuration uses:
+
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 
 For local development outside Docker, a default localhost connection is provided in the database connection module.
 
-When running through Docker Compose, the application connects to the PostgreSQL service using the internal service hostname `db`.
+When running through Docker Compose, the application connects to PostgreSQL using the internal service hostname `db`.
 
 ### Database Persistence
 
@@ -214,6 +233,19 @@ Docker Compose uses a named Docker volume:
 This ensures database records survive container restarts and recreation, as long as the volume is retained.
 
 The database is not exposed through a host port in the current Compose configuration.
+
+### Cloud Database Separation
+
+The Terraform architecture defines two separate PostgreSQL databases:
+
+| Environment | Database | Availability |
+|---|---|---|
+| Staging | `sessions-api-staging-postgres` | Single-AZ |
+| Production | `sessions-api-production-postgres` | Multi-AZ |
+
+Each database has its own endpoint and AWS Secrets Manager-managed credentials.
+
+This prevents staging and production from sharing the same database and provides better environment isolation.
 
 ## 7. Docker Implementation
 
@@ -420,8 +452,6 @@ python3 -m pytest -v
 
 **Test execution result: 10 passed, 0 failed.**
 
-The tests have been executed successfully.
-
 A Starlette deprecation warning related to HTTPX remains in the current testing dependency stack. It does not prevent the tests from passing.
 
 ## 10. Git and GitHub Version Control
@@ -434,7 +464,7 @@ Git has been initialized in the project root.
 
 **GitHub URL:**
 
-https://github.com/shiwanshu97/cloud-native-sessions-api
+[https://github.com/shiwanshu97/cloud-native-sessions-api](https://github.com/shiwanshu97/cloud-native-sessions-api)
 
 ### Git Configuration Completed
 
@@ -446,12 +476,6 @@ https://github.com/shiwanshu97/cloud-native-sessions-api
 - GitHub remote configured as `origin`.
 - Local main branch connected to the remote main branch.
 - Initial project pushed successfully to GitHub.
-
-### Initial Commit
-
-Commit message:
-
-`Initial project setup`
 
 ### Git Commands Used
 
@@ -515,20 +539,25 @@ The planned production architecture follows a containerized, cloud-based design.
 ```mermaid
 flowchart TD
     A["Users / API Clients"] --> B["AWS Application Load Balancer"]
-    B --> C["ECS Fargate - FastAPI"]
-    C --> D["Amazon RDS - PostgreSQL"]
-    C --> E["AWS Secrets Manager"]
-    C --> F["Amazon CloudWatch"]
-    D --> F
+    B --> C["ECS Fargate - Staging"]
+    B --> D["ECS Fargate - Production"]
+    C --> E["Staging RDS PostgreSQL - Single-AZ"]
+    D --> F["Production RDS PostgreSQL - Multi-AZ"]
+    C --> G["AWS Secrets Manager"]
+    D --> G
+    C --> H["Amazon CloudWatch"]
+    D --> H
+    E --> H
+    F --> H
 ```
 
 ### Request Flow
 
-1. A user sends an HTTP request over HTTPS.
+1. A user sends an HTTPS request.
 2. The Application Load Balancer receives the request.
 3. The load balancer forwards traffic to a healthy ECS application container.
 4. FastAPI validates and processes the request.
-5. The application communicates with PostgreSQL.
+5. The application communicates with its environment-specific PostgreSQL database.
 6. PostgreSQL stores or retrieves the requested data.
 7. The API returns a response to the user.
 8. Application and infrastructure logs and metrics are collected in CloudWatch.
@@ -537,41 +566,50 @@ The database is not directly accessible from the public internet.
 
 ## 12. AWS Infrastructure and Network Design
 
-The application is planned to run inside an AWS Virtual Private Cloud (VPC).
+The application is designed to run inside an AWS Virtual Private Cloud (VPC).
 
-The network will be divided into public and private subnets across two Availability Zones.
+The network is divided into public and private subnets across two Availability Zones.
 
 ### VPC Architecture
+
+The Terraform configuration uses the VPC CIDR:
+
+`10.0.0.0/16`
+
+Each Availability Zone contains:
+
+- One public subnet.
+- One private application subnet.
+- One private database subnet.
 
 ```mermaid
 flowchart TB
     Internet["Internet / API Users"]
 
     subgraph AWS["AWS Cloud"]
-        subgraph VPC["VPC - Private Network"]
-            subgraph Public["Public Subnets"]
-                ALB["Application Load Balancer"]
-                NAT["NAT Gateway - If Required"]
+        subgraph VPC["VPC - 10.0.0.0/16"]
+            ALB["Application Load Balancer"]
+
+            subgraph AZA["Availability Zone A"]
+                PA["Public Subnet A"]
+                AA["Private App Subnet A"]
+                DA["Private DB Subnet A"]
             end
 
-            subgraph App["Private Application Subnets"]
-                ECS1["ECS Task 1"]
-                ECS2["ECS Task 2"]
+            subgraph AZB["Availability Zone B"]
+                PB["Public Subnet B"]
+                AB["Private App Subnet B"]
+                DB["Private DB Subnet B"]
             end
 
-            subgraph Database["Private Database Subnets"]
-                RDS["RDS PostgreSQL"]
-            end
+            ALB --> AA
+            ALB --> AB
+            AA --> DA
+            AB --> DB
         end
     end
 
     Internet --> ALB
-    ALB --> ECS1
-    ALB --> ECS2
-    ECS1 --> RDS
-    ECS2 --> RDS
-    ECS1 -.-> NAT
-    ECS2 -.-> NAT
 ```
 
 ### Network Boundaries
@@ -579,7 +617,7 @@ flowchart TB
 **Public Subnets**
 
 - Application Load Balancer.
-- NAT Gateway, if required.
+- Internet-facing entry point for application traffic.
 
 **Private Application Subnets**
 
@@ -588,23 +626,35 @@ flowchart TB
 
 **Private Database Subnets**
 
-- Amazon RDS PostgreSQL.
-- No public IP address.
-- Accepts connections only from the application security group.
+- Amazon RDS PostgreSQL instances.
+- No public IP addresses.
+- Accept connections only from the application security group.
 
 ### Security Group Rules
 
 | Resource | Allowed Traffic |
 |---|---|
-| ALB | Internet to port 443 |
+| ALB | Public HTTPS on port 443; staging HTTPS on port 8443 |
 | ECS | ALB security group to port 8000 |
 | RDS | ECS security group to port 5432 |
 
 Only required network communication is permitted.
 
+### VPC Endpoints
+
+Terraform defines endpoints for:
+
+- Amazon ECR API.
+- Amazon ECR Docker registry.
+- CloudWatch Logs.
+- AWS Secrets Manager.
+- Amazon S3 gateway endpoint.
+
+These endpoints allow private ECS tasks to access the required AWS services without requiring a NAT gateway for this traffic.
+
 ### Supporting AWS Services
 
-**Amazon ECR:** Stores versioned Docker images such as `sessions-api:v1` and `sessions-api:v2`.
+**Amazon ECR:** Stores versioned Docker images.
 
 **AWS Secrets Manager:** Stores database credentials securely.
 
@@ -612,90 +662,333 @@ Only required network communication is permitted.
 
 **AWS IAM:** Controls permissions for ECS tasks and deployment automation.
 
-## 13. CI/CD Pipeline Architecture
+## 13. Multi-AZ Deployment and Environment Separation
 
-GitHub Actions will automate the application release process.
+High availability is an important part of the production architecture.
 
-### Planned CI/CD Workflow
+The design uses two Availability Zones to reduce the impact of an individual Availability Zone failure.
+
+Staging and production have different availability and cost requirements.
+
+### Deployment Configuration
+
+| Component | Staging | Production |
+|---|---|---|
+| ECS service | Separate service | Separate service |
+| Desired ECS tasks | 1 | 2 |
+| Application subnets | Two AZs available | Two AZs available |
+| PostgreSQL | Single-AZ | Multi-AZ |
+| Database endpoint | Separate | Separate |
+| Database credentials | Separate | Separate |
+| Backup retention | 1 day | 7 days |
+| Database deletion protection | Disabled | Enabled |
+| Load balancer | Shared ALB | Shared ALB |
+
+### Production ECS Availability
+
+Production has two desired ECS Fargate tasks.
+
+Both private application subnets are provided to the ECS service, allowing ECS to place tasks across the two Availability Zones.
+
+ECS can replace failed tasks automatically, while the ALB health checks identify unhealthy application targets.
+
+The two-task configuration improves application availability, but subnet configuration alone does not guarantee that exactly one task will always run in each Availability Zone. Actual placement should be verified after deployment.
+
+### Production Database Availability
+
+Production uses Amazon RDS PostgreSQL with Multi-AZ enabled:
+
+```hcl
+multi_az = true
+```
+
+RDS maintains a standby database in another Availability Zone and supports automatic failover.
+
+Staging uses:
+
+```hcl
+multi_az = false
+```
+
+This reduces staging infrastructure costs.
+
+### Separate Database Instances
+
+Terraform defines two independent RDS resources:
+
+- `aws_db_instance.staging`
+- `aws_db_instance.production`
+
+Each database has its own:
+
+- Database endpoint.
+- AWS-managed master password secret.
+- ECS task definition secret reference.
+- Environment-specific configuration.
+
+Both databases use the private RDS subnet group and RDS security group.
+
+### Why This Design?
+
+Using a Single-AZ database for staging reduces unnecessary expenditure.
+
+Production uses Multi-AZ RDS and two desired ECS tasks to improve resilience and availability.
+
+The design balances production reliability with cost-conscious staging infrastructure.
+
+## 14. Terraform Infrastructure as Code
+
+Terraform is used to define the AWS infrastructure.
+
+The configuration is located in:
+
+`terraform/`
+
+The AWS provider is configured with the default region:
+
+`ap-south-1`
+
+The AWS Mumbai region is selected for the deployment design.
+
+### Terraform Resources
+
+The configuration defines:
+
+- VPC.
+- Internet gateway.
+- Public subnets.
+- Private application subnets.
+- Private database subnets.
+- Route tables and associations.
+- VPC endpoints.
+- Security groups.
+- RDS subnet group.
+- Staging PostgreSQL instance.
+- Production Multi-AZ PostgreSQL instance.
+- Application Load Balancer.
+- Production and staging target groups.
+- HTTPS listeners.
+- ACM certificate and DNS validation.
+- ECR repository.
+- ECS cluster.
+- Staging and production task definitions.
+- Staging and production ECS services.
+- IAM execution and task roles.
+- CloudWatch log group.
+
+### Terraform Module Structure
+
+The infrastructure is currently organized into a root configuration and a module:
+
+- `terraform/main.tf` configures the AWS provider and calls the infrastructure module.
+- `terraform/variables.tf` defines the AWS region.
+- `terraform/modules/` contains the infrastructure resource definitions.
+- `terraform/modules/variables.tf` defines shared module inputs.
+- `terraform/modules/outputs.tf` exposes useful infrastructure outputs.
+
+### Terraform Validation
+
+The following commands were run successfully:
+
+```bash
+terraform fmt -recursive
+terraform validate
+```
+
+Validation result:
+
+```text
+Success! The configuration is valid.
+```
+
+The formatting check also completed without reporting formatting issues:
+
+```bash
+terraform fmt -check -recursive
+```
+
+### Terraform Plan
+
+The latest Terraform plan reports:
+
+```text
+Plan: 46 to add, 0 to change, 0 to destroy.
+```
+
+The plan confirms both database resources:
+
+```text
+module.network.aws_db_instance.production will be created
+module.network.aws_db_instance.staging will be created
+```
+
+The plan includes the separate staging and production databases, ECS services, networking, load balancing, security groups, IAM resources, and supporting infrastructure.
+
+**Important:** Terraform has not been applied. The 46 resources are planned only; no AWS infrastructure has been created for this assessment.
+
+## 15. ECS Fargate and ECR Configuration
+
+The Terraform configuration defines:
+
+- One ECS cluster.
+- One ECR repository.
+- Separate staging and production task definitions.
+- Separate staging and production ECS services.
+
+### ECS Cluster
+
+The cluster name is:
+
+`sessions-api-cluster`
+
+Container Insights is enabled in the cluster configuration.
+
+### ECR Repository
+
+The repository name is:
+
+`sessions-api-api`
+
+The repository uses immutable image tags and scan-on-push configuration.
+
+### ECS Services
+
+| Setting | Staging | Production |
+|---|---|---|
+| ECS service | `sessions-api-staging-service` | `sessions-api-production-service` |
+| Task family | `sessions-api-staging` | `sessions-api-production` |
+| Desired tasks | 1 | 2 |
+| Launch type | Fargate | Fargate |
+| CPU | 256 | 256 |
+| Memory | 512 MiB | 512 MiB |
+| Container port | 8000 | 8000 |
+
+Both services run in private application subnets and use the ECS security group.
+
+The Application Load Balancer forwards traffic to the corresponding target groups.
+
+### Container Configuration
+
+The task definitions use environment-specific database endpoints and password secrets.
+
+The ECS execution role has permission to retrieve both database password secrets from Secrets Manager.
+
+The application receives the database configuration through environment variables and the `DB_PASSWORD` secret reference.
+
+## 16. CI/CD Pipeline Architecture
+
+GitHub Actions automates application testing, Docker image building, vulnerability scanning, and conditional AWS deployment.
+
+The workflow is located at:
+
+`.github/workflows/ci.yml`
+
+### Implemented CI/CD Workflow
 
 ```mermaid
 flowchart TD
-    A["Developer Changes Code"] --> B["Push to GitHub"]
-    B --> C["GitHub Actions Triggered"]
-    C --> D["Install Dependencies"]
-    D --> E["Run Automated Tests"]
-    E --> F["Trivy Security Scan"]
-    F --> G["Build Docker Image"]
-    G --> H["Tag Versioned Image"]
-    H --> I["Push Image to Amazon ECR"]
-    I --> J["Deploy to Staging ECS"]
-    J --> K["Post Deployment Health Check"]
-    K --> L{"Health Check Passed?"}
-    L -->|No| M["Stop Release and Roll Back"]
-    L -->|Yes| N["Manual Production Approval"]
-    N --> O["Deploy to Production ECS"]
-    O --> P["Verify Production"]
+    A["Developer Pushes to GitHub"] --> B["Run Automated Tests"]
+    B --> C["Build Docker Image"]
+    C --> D["Trivy Vulnerability Scan"]
+    D --> E{"AWS Deployment Enabled?"}
+    E -->|No| F["CI Validation Complete"]
+    E -->|Yes| G["Authenticate Using GitHub OIDC"]
+    G --> H["Publish Image to ECR"]
+    H --> I["Deploy to Staging ECS"]
+    I --> J["Staging Health Check"]
+    J --> K["Production Approval"]
+    K --> L["Deploy to Production ECS"]
+    L --> M["Production Health Check"]
 ```
 
-### Planned Pipeline Stages
+### Pipeline Stages
 
 1. Developer pushes code to GitHub.
 2. GitHub Actions starts automatically.
-3. Dependencies are installed.
+3. Python dependencies are installed.
 4. Automated application tests run.
-5. Trivy scans for vulnerabilities.
-6. Docker image is built and versioned.
-7. Image is pushed to Amazon ECR.
-8. Staging ECS service is updated.
-9. Post-deployment health checks run.
-10. Production deployment requires manual approval.
-11. Production is deployed and verified.
+5. Docker image is built.
+6. Trivy scans the built image for vulnerabilities.
+7. Image publishing is conditionally enabled.
+8. GitHub Actions authenticates with AWS using OIDC.
+9. The image is pushed to Amazon ECR.
+10. The staging ECS task definition is updated and deployed.
+11. A staging health check is performed.
+12. Production deployment requires approval through a GitHub environment.
+13. The production ECS service is updated.
+14. A production health check is performed.
+15. Rollback steps attempt to restore the previous ECS task definition if deployment or health verification fails.
+
+### Trivy Security Scanning
+
+The workflow scans the Docker image for HIGH and CRITICAL vulnerabilities.
+
+The scan is configured to ignore unfixed vulnerabilities and fail the workflow when qualifying vulnerabilities are found.
 
 ### Secure CI/CD Authentication
 
-GitHub Actions will use OpenID Connect (OIDC) to obtain temporary AWS credentials through an IAM role.
+GitHub Actions is designed to use OpenID Connect (OIDC) to obtain temporary AWS credentials through an IAM role.
 
 Long-lived AWS access keys will not be stored in the repository.
+
+### Terraform and ECS Task Definition Integration
+
+Terraform defines the initial ECS task definitions, including:
+
+- Execution role.
+- Task role.
+- Database environment variables.
+- Secrets Manager references.
+- CloudWatch log configuration.
+- Container port configuration.
+
+The deployment workflow retrieves the registered task definition from ECS and updates its container image.
+
+This approach preserves the infrastructure configuration instead of maintaining separate static task definitions that could become inconsistent with Terraform.
+
+### Deployment Configuration
+
+The workflow uses the GitHub repository variable:
+
+`AWS_DEPLOY_ENABLED`
+
+When this variable is not set to `true`, the AWS publishing and deployment jobs are skipped while the CI workflow can still run.
+
+The AWS deployment path also requires:
+
+- An AWS IAM role ARN configured in GitHub.
+- A correctly configured GitHub OIDC trust relationship.
+- Provisioned ECR and ECS infrastructure.
+- Registered staging and production ECS task definitions.
+- A configured production GitHub environment and approval protection.
 
 ### Rollback Strategy
 
 If deployment causes failures:
 
-1. Detect failed health checks or increased 5xx errors.
+1. Detect failed health checks or deployment errors.
 2. Stop the faulty release.
-3. Restore the previous known-good container image.
+3. Attempt to restore the previous ECS task definition.
 4. Verify application health.
 5. Investigate the failed release.
 
-## 14. Environment Separation
+### Pipeline Validation
 
-The project will use three environments.
+The workflow was checked using:
 
-### Development
+```bash
+actionlint .github/workflows/ci.yml
+```
 
-- Runs locally on a developer's Mac.
-- Uses Docker and Docker Compose.
-- Uses a local PostgreSQL database.
-- Used for development and testing.
+The latest syntax validation returned no errors.
 
-### Staging
+The earlier CI and Docker build stages have also run successfully on GitHub Actions.
 
-- Runs on AWS ECS Fargate.
-- Uses a separate staging configuration and database.
-- Used to validate releases before production.
+The latest Trivy and conditional AWS deployment workflow has been syntax-checked. Live AWS deployment, production approval, and rollback execution have not yet been tested.
 
-### Production
+## 17. Security Architecture
 
-- Runs on a separate ECS service.
-- Uses production-specific database credentials.
-- Uses separate secrets and configuration.
-- Serves real application traffic.
-
-Staging and production will not share credentials or application secrets.
-
-## 15. Security Architecture
-
-Security will be applied across all components.
+Security is applied across all components.
 
 | Area | Security Control |
 |---|---|
@@ -709,15 +1002,35 @@ Security will be applied across all components.
 | Source control | GitHub repository protections |
 | Logging | CloudWatch |
 
+### Network Security
+
+The security groups enforce the following rules:
+
+- ALB accepts public HTTPS traffic on port 443.
+- Staging listener accepts HTTPS traffic on port 8443.
+- ECS tasks accept application traffic on port 8000 only from the ALB security group.
+- Both RDS databases accept PostgreSQL traffic on port 5432 only from the ECS security group.
+- RDS instances are not publicly accessible.
+
+Staging access on port 8443 is currently designed to be public. It should be restricted or protected with authentication before a real production deployment.
+
 ### IAM Roles
 
-Two important ECS roles will be configured:
+Two important ECS roles are configured in Terraform.
 
-**Task execution role:** Allows ECS to pull images from ECR, retrieve startup secrets where configured, and publish logs.
+**Task execution role:** Allows ECS to pull images from ECR, retrieve startup secrets, and publish logs.
 
-**Task role:** Gives the running application only the permissions it needs.
+**Task role:** Assigned to the running application and kept separate from the execution role so application permissions can be controlled independently.
 
-The principle of least privilege will be followed.
+### Secrets Management
+
+RDS manages the database master credentials through AWS Secrets Manager.
+
+Staging and production use separate managed database password secrets.
+
+The ECS task definitions reference the appropriate secret for each environment.
+
+Database passwords are not embedded directly in the application source or Docker image.
 
 ### Secret Rotation
 
@@ -730,9 +1043,36 @@ If a secret is exposed:
 5. Verify the service.
 6. Investigate the exposure and review repository history.
 
-## 16. Monitoring and Logging Architecture
+## 18. SSL/TLS and HTTPS
 
-Amazon CloudWatch will be used for centralized monitoring.
+AWS Certificate Manager is configured to request a certificate for:
+
+`api.shiwanshu.site`
+
+DNS validation is used.
+
+The domain is hosted through Cloudflare.
+
+The required ACM DNS validation record must be added to Cloudflare before the certificate can be validated.
+
+The Application Load Balancer has:
+
+- Production HTTPS listener on port 443.
+- Staging HTTPS listener on port 8443.
+
+Both listeners are configured to use the ACM certificate.
+
+The certificate and DNS validation resources are defined in Terraform but have not been provisioned or validated against AWS.
+
+## 19. Monitoring and Logging Architecture
+
+Amazon CloudWatch is used for centralized monitoring.
+
+The Terraform configuration creates a CloudWatch log group:
+
+`/ecs/sessions-api`
+
+Container logs are configured through the ECS task definitions.
 
 ### Monitoring Flow
 
@@ -750,13 +1090,12 @@ flowchart TD
 
 ### Metrics to Monitor
 
-- HTTP 5xx errors.
-- ECS CPU utilization.
-- ECS memory utilization.
-- Request count.
-- Database connections.
-- Database CPU utilization.
-- Database storage capacity.
+| Component | Metrics |
+|---|---|
+| ALB | HTTP 5xx errors, request count, response time |
+| ECS | CPU utilization, memory utilization, running task count |
+| RDS | CPU utilization, database connections, free storage |
+| Application | Health endpoint availability and application errors |
 
 ### Planned Alerts
 
@@ -768,11 +1107,22 @@ Trigger an alert when the load balancer's 5xx errors exceed an agreed threshold.
 
 Trigger an alert when ECS CPU utilization remains above 80% for five minutes.
 
-Alerts will be delivered through Amazon SNS.
+Alerts can be delivered through Amazon SNS.
 
-## 17. Backup and Disaster Recovery
+The CloudWatch log group and ECS log configuration are defined in Terraform. The full monitoring alarms, dashboards, SNS notifications, and live alert behaviour remain to be implemented and tested.
 
-Amazon RDS automated backups will be configured for the production database.
+## 20. Backup and Disaster Recovery
+
+Amazon RDS automated backups are configured in the Terraform design.
+
+### Backup Configuration
+
+| Environment | Backup Retention | Multi-AZ |
+|---|---|---|
+| Staging | 1 day | No |
+| Production | 7 days | Yes |
+
+Production also has deletion protection enabled.
 
 ### Database Recovery Flow
 
@@ -790,12 +1140,14 @@ flowchart TD
 ### Recovery Procedure
 
 1. Identify and investigate database failure.
-2. Determine the latest suitable backup or recovery point.
-3. Restore the database.
-4. Verify tables, records, and data integrity.
-5. Update application database connectivity if necessary.
-6. Test application endpoints.
-7. Resume normal operations.
+2. Check RDS status and CloudWatch metrics.
+3. Determine whether automatic Multi-AZ failover has occurred.
+4. Identify the latest suitable backup or recovery point.
+5. Restore the database if required.
+6. Verify tables, records, and data integrity.
+7. Update application database connectivity if necessary.
+8. Test application endpoints.
+9. Resume normal operations.
 
 ### Recovery Objectives
 
@@ -803,9 +1155,14 @@ flowchart TD
 
 **RTO (Recovery Time Objective):** The maximum acceptable time to restore service.
 
-Specific RPO and RTO targets will be defined and tested as part of the recovery exercise.
+The proposed production recovery targets are:
 
-## 18. Operational Incident Scenarios
+- RPO: Up to 5 minutes, subject to the available recovery mechanism and backup configuration.
+- RTO: Within 1 hour, subject to recovery testing and AWS service availability.
+
+These are proposed assessment targets, not measured guarantees. Multi-AZ failover and backup restoration should be tested before relying on these objectives in production.
+
+## 21. Operational Incident Scenarios
 
 ### Scenario 1: Deployment Secret Exposed
 
@@ -821,7 +1178,7 @@ Specific RPO and RTO targets will be defined and tested as part of the recovery 
 - Check ALB request count and response latency.
 - Check ECS CPU and memory utilization.
 - Check database CPU and connections.
-- Scale ECS tasks using service autoscaling.
+- Scale ECS tasks if required.
 - Assess whether database scaling is required.
 - Review cost impact from additional tasks, database resources, NAT, and data transfer.
 
@@ -830,12 +1187,13 @@ Specific RPO and RTO targets will be defined and tested as part of the recovery 
 - Check RDS status and CloudWatch metrics.
 - Investigate connectivity and database errors.
 - Check recent database changes.
+- Check whether Multi-AZ failover has occurred.
 - Restore from a suitable backup if necessary.
 - Verify database integrity.
 - Reconnect the application.
 - Verify application health.
 
-## 19. Project Directory Structure
+## 22. Project Directory Structure
 
 Current project structure:
 
@@ -844,23 +1202,39 @@ cloud-native-sessions-api/
 │
 ├── app/
 │   ├── __init__.py
-│   │
+│   ├── main.py
 │   ├── database/
 │   │   ├── __init__.py
 │   │   ├── connection.py
 │   │   └── models.py
-│   │
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   └── session.py
-│   │
-│   └── main.py
+│   └── schemas/
+│       ├── __init__.py
+│       └── session.py
 │
 ├── tests/
 │   └── test_api.py
 │
 ├── docker/
 │   └── Dockerfile
+│
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── .terraform.lock.hcl
+│   └── modules/
+│       ├── network.tf
+│       ├── variables.tf
+│       ├── outputs.tf
+│       ├── security.tf
+│       ├── database.tf
+│       ├── load_balancer.tf
+│       ├── certificate.tf
+│       ├── ecs.tf
+│       └── ecs_service.tf
+│
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 │
 ├── docs/
 │   └── Ahoum Assignment DevOps Exp.pdf
@@ -872,56 +1246,58 @@ cloud-native-sessions-api/
 └── README.md
 ```
 
-### Planned Future Directories
+### Additional Documentation Planned
 
-The following directories and files will be added as the project progresses:
+The following operational documents can be added as the project is finalized:
 
 ```text
-terraform/
-├── modules/
-└── environments/
-
 docs/
 ├── architecture.md
 ├── deployment.md
 ├── rollback.md
 ├── secret-rotation.md
 └── database-recovery.md
-
-.github/
-└── workflows/
-    └── ci-cd.yml
 ```
 
-## 20. Cost Considerations
+## 23. Cost Considerations
 
 No paid AWS resources will be created solely for this assessment.
 
-The project will prioritize:
+The project prioritizes:
 
 - Local Docker demonstrations.
 - Terraform configuration and plan output.
 - Documented cloud deployment steps.
 - Redacted pipeline and monitoring evidence.
 
-Any cloud deployment will be optional and subject to cost review.
+The infrastructure design uses cost-conscious choices:
+
+- ECS Fargate instead of operating an EKS cluster.
+- One ECS task for staging.
+- Two desired ECS tasks for production.
+- Single-AZ RDS for staging.
+- Multi-AZ RDS for production.
+- VPC endpoints to avoid requiring a NAT gateway for the supported AWS service traffic.
 
 Potential AWS costs include:
 
 - ECS Fargate compute.
 - Application Load Balancer.
 - Amazon RDS.
-- NAT Gateway.
+- NAT Gateway, if required for additional outbound traffic.
 - ECR image storage.
 - CloudWatch logs and alarms.
 - Secrets Manager.
+- Interface VPC endpoints.
 - Data transfer.
 
-Cost optimization will be considered when designing the infrastructure.
+Multi-AZ production RDS, two production Fargate tasks, and interface VPC endpoints will incur additional charges if deployed.
 
-## 21. Current Project Status
+The Terraform plan does not represent actual running infrastructure or actual AWS costs.
 
-### Completed
+## 24. Current Project Status
+
+### Completed and Tested Locally
 
 - [x] Project folder and initial structure created.
 - [x] Development tools installed and configured.
@@ -945,37 +1321,63 @@ Cost optimization will be considered when designing the infrastructure.
 - [x] Separate SQLite test database configured.
 - [x] Test database cleanup fixture implemented.
 - [x] All 10 automated tests passing.
-- [x] Pydantic deprecation warning fixed.
 - [x] Git initialized and configured.
 - [x] `.gitignore` created.
 - [x] Initial Git commit created.
 - [x] GitHub repository created.
 - [x] Local Git repository connected to GitHub.
 - [x] Initial project pushed to GitHub main branch.
+- [x] README updated with implementation and infrastructure documentation.
 
-### Planned / In Progress
+### Implemented or Configured and Validated
 
-- [ ] Final README review and update.
-- [ ] GitHub Actions CI workflow.
-- [ ] Automated Docker image build pipeline.
-- [ ] Trivy security scanning.
-- [ ] Terraform infrastructure implementation.
-- [ ] AWS VPC and networking configuration.
-- [ ] ECS Fargate deployment configuration.
-- [ ] Amazon ECR integration.
-- [ ] Amazon RDS configuration.
-- [ ] GitHub OIDC and AWS IAM integration.
-- [ ] AWS Secrets Manager integration.
-- [ ] Staging and production environment configuration.
-- [ ] Deployment health checks and rollback automation.
-- [ ] CloudWatch monitoring and alerting.
-- [ ] Database backup and recovery implementation.
-- [ ] Operational runbooks.
-- [ ] Final testing and assessment evidence.
+- [x] GitHub Actions CI workflow.
+- [x] Automated test execution in GitHub Actions.
+- [x] Docker image build in GitHub Actions.
+- [x] Trivy image vulnerability scanning configuration.
+- [x] Conditional ECR publishing and ECS deployment workflow.
+- [x] GitHub Actions workflow syntax checked with actionlint.
+- [x] Terraform AWS provider and module configuration.
+- [x] AWS VPC and networking configuration.
+- [x] Two Availability Zones.
+- [x] Public and private network segmentation.
+- [x] VPC endpoints.
+- [x] Security groups.
+- [x] Application Load Balancer.
+- [x] ACM certificate request and DNS validation configuration.
+- [x] ECR repository configuration.
+- [x] ECS cluster and Fargate task definitions.
+- [x] Separate staging and production ECS services.
+- [x] Staging configured for one desired ECS task.
+- [x] Production configured for two desired ECS tasks.
+- [x] Separate staging Single-AZ database.
+- [x] Separate production Multi-AZ database.
+- [x] Separate database secrets and endpoints.
+- [x] CloudWatch log group and ECS log configuration.
+- [x] Terraform outputs updated for both databases.
+- [x] Terraform formatting check passed.
+- [x] Terraform validation passed.
+- [x] Terraform plan generated successfully.
+- [x] Terraform plan confirms 46 resources to add, 0 to change, and 0 to destroy.
 
----
+### Remaining Before a Real AWS Deployment
 
-## 22. Project Philosophy
+- [ ] Configure and verify the GitHub OIDC IAM provider and deployment role.
+- [ ] Configure GitHub repository variables and production environment approval.
+- [ ] Complete DNS validation for the ACM certificate.
+- [ ] Prepare and publish the initial ECR image before starting ECS services.
+- [ ] Provision infrastructure when deployment is authorised.
+- [ ] Deploy staging and verify the health endpoint.
+- [ ] Deploy production and verify both ECS tasks and database connectivity.
+- [ ] Verify actual ECS task placement across Availability Zones.
+- [ ] Verify Multi-AZ database failover and backup recovery.
+- [ ] Configure and test CloudWatch alarms, dashboards, and notifications.
+- [ ] Perform deployment and rollback testing.
+- [ ] Complete operational runbooks and assessment evidence.
+
+**Important:** The AWS infrastructure remains unprovisioned. Terraform validation and planning do not create AWS resources. No `terraform apply` has been performed for this assessment.
+
+## 25. Project Philosophy
 
 This project follows a practical DevOps implementation approach:
 
@@ -985,7 +1387,9 @@ This project follows a practical DevOps implementation approach:
 4. Automate testing and release workflows.
 5. Provision infrastructure through code.
 6. Apply security and access controls.
-7. Monitor application and infrastructure health.
-8. Document recovery and operational procedures.
+7. Design high availability across Availability Zones.
+8. Monitor application and infrastructure health.
+9. Document recovery and operational procedures.
+10. Balance reliability with infrastructure costs.
 
-The goal is to demonstrate a complete, understandable, and reproducible deployment lifecycle while avoiding unnecessary cloud expenditure.
+The goal is to demonstrate a complete, understandable, secure, and reproducible deployment lifecycle while avoiding unnecessary cloud expenditure.

@@ -1,8 +1,6 @@
 
-name: Sessions API CI
+name: Sessions API CI/CD
 
-# Run this workflow whenever code is pushed to main
-# or a pull request targets main.
 on:
   push:
     branches:
@@ -11,9 +9,12 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    name: Run automated tests
+  test-and-scan:
+    name: Test, Build and Security Scan
     runs-on: ubuntu-latest
 
     steps:
@@ -33,7 +34,269 @@ jobs:
       - name: Run automated tests
         run: |
           python -m pytest -v
-          
+
       - name: Build Docker image
         run: |
-          docker build -f docker/Dockerfile -t sessions-api:ci .
+          docker build -f docker/Dockerfile -t sessions-api:${{ github.sha }} .
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: sessions-api:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  publish-image:
+    name: Publish Image to Amazon ECR
+    needs: test-and-scan
+    if: github.event_name == 'push' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: sessions-api-api
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${REGISTRY}/${REPOSITORY}:${IMAGE_TAG}"
+
+          docker build -f docker/Dockerfile \
+            -t "$IMAGE_URI" .
+
+          docker push "$IMAGE_URI"
+
+      - name: Set image output
+        id: image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: sessions-api-api
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="${REGISTRY}/${REPOSITORY}:${IMAGE_TAG}"
+          echo "image=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: publish-image
+    if: github.event_name == 'push' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Capture current staging task definition
+        id: previous
+        env:
+          CLUSTER: sessions-api-cluster
+          SERVICE: sessions-api-staging-service
+        run: |
+          ARN=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          if [ "$ARN" != "None" ]; then
+            echo "task_definition=$ARN" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retrieve current staging task definition
+        env:
+          TASK_FAMILY: sessions-api-staging
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query "taskDefinition" \
+            --output json |
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy,
+            .deregisteredAt
+          )' > task-definition-staging.json
+
+      - name: Update staging task definition with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition-staging.json
+          container-name: sessions-api
+          image: ${{ needs.publish-image.outputs.image }}
+
+      - name: Deploy to staging ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2.6.4
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: sessions-api-staging-service
+          cluster: sessions-api-cluster
+          wait-for-service-stability: true
+
+      - name: Verify staging health
+        env:
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 10 \
+            --retry-delay 15 \
+            --retry-all-errors \
+            "$HEALTH_URL"
+
+      - name: Roll back staging if deployment fails
+        if: failure() && steps.previous.outputs.task_definition != ''
+        env:
+          CLUSTER: sessions-api-cluster
+          SERVICE: sessions-api-staging-service
+          PREVIOUS_TASK_DEFINITION: ${{ steps.previous.outputs.task_definition }}
+        run: |
+          echo "Rolling staging back to previous task definition..."
+
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --task-definition "$PREVIOUS_TASK_DEFINITION"
+
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE"
+
+  deploy-production:
+    name: Deploy to Production
+    needs:
+      - publish-image
+      - deploy-staging
+    if: github.event_name == 'push' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Capture current production task definition
+        id: previous
+        env:
+          CLUSTER: sessions-api-cluster
+          SERVICE: sessions-api-production-service
+        run: |
+          ARN=$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE" \
+            --query "services[0].taskDefinition" \
+            --output text)
+
+          if [ "$ARN" != "None" ]; then
+            echo "task_definition=$ARN" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Retrieve current production task definition
+        env:
+          TASK_FAMILY: sessions-api-production
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query "taskDefinition" \
+            --output json |
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy,
+            .deregisteredAt
+          )' > task-definition-production.json
+
+      - name: Update production task definition with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition-production.json
+          container-name: sessions-api
+          image: ${{ needs.publish-image.outputs.image }}
+
+      - name: Deploy to production ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2.6.4
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: sessions-api-production-service
+          cluster: sessions-api-cluster
+          wait-for-service-stability: true
+
+      - name: Verify production health
+        env:
+          HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 10 \
+            --retry-delay 15 \
+            --retry-all-errors \
+            "$HEALTH_URL"
+
+      - name: Roll back production if deployment fails
+        if: failure() && steps.previous.outputs.task_definition != ''
+        env:
+          CLUSTER: sessions-api-cluster
+          SERVICE: sessions-api-production-service
+          PREVIOUS_TASK_DEFINITION: ${{ steps.previous.outputs.task_definition }}
+        run: |
+          echo "Rolling production back to previous task definition..."
+
+          aws ecs update-service \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
+            --task-definition "$PREVIOUS_TASK_DEFINITION"
+
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE"
